@@ -1,5 +1,6 @@
 # FinancialWallet
-
+```bash
+.
 |-- Configuration
 |-- Context
 |-- Entities
