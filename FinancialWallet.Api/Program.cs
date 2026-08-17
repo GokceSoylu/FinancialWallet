@@ -2,12 +2,45 @@ using System.Threading.Channels;
 using FinancialWallet.Api.Context;
 using FinancialWallet.Api.Entities;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. PostgreSQL & AppDbContext Bağlantısı
+// 1. PostgreSQL & AppDbContext Bağlantısı (Standart veya Render URL Desteği)
+var rawConn = builder.Configuration.GetConnectionString("DefaultConnection")
+              ?? Environment.GetEnvironmentVariable("DATABASE_URL");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    if (!string.IsNullOrWhiteSpace(rawConn))
+    {
+        // Render postgresql:// formatındaysa Npgsql formatına çevir
+        if (rawConn.StartsWith("postgres://") || rawConn.StartsWith("postgresql://"))
+        {
+            var uri = new Uri(rawConn);
+            var userInfo = uri.UserInfo.Split(':');
+            var npgsqlBuilder = new NpgsqlConnectionStringBuilder
+            {
+                Host = uri.Host,
+                Port = uri.Port > 0 ? uri.Port : 5432,
+                Username = userInfo[0],
+                Password = userInfo.Length > 1 ? userInfo[1] : string.Empty,
+                Database = uri.AbsolutePath.TrimStart('/'),
+                SslMode = SslMode.Require,
+                TrustServerCertificate = true
+            };
+            options.UseNpgsql(npgsqlBuilder.ConnectionString);
+        }
+        else
+        {
+            options.UseNpgsql(rawConn);
+        }
+    }
+    else
+    {
+        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+    }
+});
 
 // 2. CORS Yapılandırması
 builder.Services.AddCors(options =>
@@ -29,18 +62,22 @@ builder.Services.AddHostedService<ReceiptWorkerService>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+// Swagger'ı Production dahil her ortamda aç
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "FinancialWallet API v1");
+    c.RoutePrefix = string.Empty; // Sitenin ana adresine girince (/) doğrudan Swagger açılsın
+});
 
 app.UseCors("AllowAll");
 
-// 4. Tablo ve Demo Veri Oluşturma
-using (var scope = app.Services.CreateScope())
+// 4. Tablo ve Demo Veri Oluşturma (Korumalı Blok)
+try
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
     db.Database.EnsureCreated();
 
     if (!db.Users.Any())
@@ -61,11 +98,16 @@ using (var scope = app.Services.CreateScope())
             SourceWalletId = w1.Id,
             Amount = 25000.00m,
             Type = TransactionType.Deposit,
-            Description = "İlk Bakiye Yüklemesi"
+            Description = "İlk Bakiye Yüklemesi",
+            CreatedAt = DateTime.UtcNow
         });
 
         db.SaveChanges();
     }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[UYARI] Veritabanı başlatma hatası: {ex.Message}");
 }
 
 // 5. Endpoint'ler
@@ -104,7 +146,7 @@ app.MapGet("/api/wallets", async (AppDbContext db) =>
     return Results.Ok(wallets);
 });
 
-// Para Yatırma / Çekme (Optimistic Concurrency & DTO Dönüşü)
+// Para Yatırma / Çekme
 app.MapPost("/api/transactions/deposit-withdraw", async (AppDbContext db, DepositWithdrawDto dto) =>
 {
     if (dto.Amount <= 0) return Results.BadRequest("Tutar sıfırdan büyük olmalıdır.");
@@ -151,7 +193,7 @@ app.MapPost("/api/transactions/deposit-withdraw", async (AppDbContext db, Deposi
     }
 });
 
-// Hesaplar Arası Para Transferi (ACID Transaction & Event Fırlatma)
+// Hesaplar Arası Para Transferi
 app.MapPost("/api/transactions/transfer", async (AppDbContext db, Channel<ReceiptEvent> queue, TransferDto dto) =>
 {
     if (dto.Amount <= 0) return Results.BadRequest("Transfer tutarı sıfırdan büyük olmalıdır.");
