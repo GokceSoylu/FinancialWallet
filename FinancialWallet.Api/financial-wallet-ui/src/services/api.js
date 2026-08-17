@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Backend portun 5220 ise:
-const API_BASE_URL = 'http://localhost:5220/api';
+const API_BASE = 'https://financialwallet.onrender.com';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
