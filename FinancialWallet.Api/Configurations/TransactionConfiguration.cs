@@ -18,7 +18,10 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
             .HasMaxLength(250);
 
         builder.Property(t => t.Type)
-            .HasConversion<int>() // Enum'ı veritabanında integer olarak sakla
+            .HasConversion<int>()
             .IsRequired();
+
+        builder.Property(t => t.TargetWalletId)
+            .IsRequired(false);
     }
 }

@@ -14,15 +14,18 @@ public class WalletConfiguration : IEntityTypeConfiguration<Wallet>
             .IsRequired()
             .HasMaxLength(3);
 
-        // Finansal verilerde precision ve scale zorunludur!
         builder.Property(w => w.Balance)
             .HasPrecision(18, 2)
             .HasDefaultValue(0.00m);
 
-        // 1 Wallet -> N Transaction ilişkisi
+        // Optimistic Concurrency Token
+        builder.Property(w => w.Version)
+            .IsConcurrencyToken();
+
+        // 1 Wallet -> N Transaction (Source Wallet ilişkisi)
         builder.HasMany(w => w.Transactions)
-            .WithOne(t => t.Wallet)
-            .HasForeignKey(t => t.WalletId)
-            .OnDelete(DeleteBehavior.Restrict); // Cüzdan silinirse geçmiş transfer kayıtları silinmesin, korunsun!
+            .WithOne(t => t.SourceWallet)
+            .HasForeignKey(t => t.SourceWalletId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

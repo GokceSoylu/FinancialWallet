@@ -121,3 +121,10 @@
 /Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/obj/Debug/net10.0/FinancialWallet.Api.pdb
 /Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/obj/Debug/net10.0/FinancialWallet.Api.genruntimeconfig.cache
 /Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/obj/Debug/net10.0/ref/FinancialWallet.Api.dll
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/Scalar.AspNetCore.dll
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/Swashbuckle.AspNetCore.Swagger.dll
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/Swashbuckle.AspNetCore.SwaggerGen.dll
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/Swashbuckle.AspNetCore.SwaggerUI.dll
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/financial-wallet-ui/.oxlintrc.json
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/financial-wallet-ui/package-lock.json
+/Users/gokcesoylu/FinancialWallet/FinancialWallet.Api/bin/Debug/net10.0/financial-wallet-ui/package.json
