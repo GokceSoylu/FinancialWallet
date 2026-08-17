@@ -6,40 +6,42 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. PostgreSQL & AppDbContext Bağlantısı (Standart veya Render URL Desteği)
-var rawConn = builder.Configuration.GetConnectionString("DefaultConnection")
-              ?? Environment.GetEnvironmentVariable("DATABASE_URL");
+// 1. PostgreSQL & AppDbContext Bağlantısı
+var rawConn = Environment.GetEnvironmentVariable("DATABASE_URL")
+              ?? builder.Configuration.GetConnectionString("DefaultConnection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    if (!string.IsNullOrWhiteSpace(rawConn))
+    string connectionString;
+
+    if (!string.IsNullOrWhiteSpace(rawConn) && (rawConn.StartsWith("postgres://") || rawConn.StartsWith("postgresql://")))
     {
-        // Render postgresql:// formatındaysa Npgsql formatına çevir
-        if (rawConn.StartsWith("postgres://") || rawConn.StartsWith("postgresql://"))
+        var uri = new Uri(rawConn);
+        var userInfo = uri.UserInfo.Split(':');
+        var npgsqlBuilder = new NpgsqlConnectionStringBuilder
         {
-            var uri = new Uri(rawConn);
-            var userInfo = uri.UserInfo.Split(':');
-            var npgsqlBuilder = new NpgsqlConnectionStringBuilder
-            {
-                Host = uri.Host,
-                Port = uri.Port > 0 ? uri.Port : 5432,
-                Username = userInfo[0],
-                Password = userInfo.Length > 1 ? userInfo[1] : string.Empty,
-                Database = uri.AbsolutePath.TrimStart('/'),
-                SslMode = SslMode.Require,
-                TrustServerCertificate = true
-            };
-            options.UseNpgsql(npgsqlBuilder.ConnectionString);
-        }
-        else
-        {
-            options.UseNpgsql(rawConn);
-        }
+            Host = uri.Host,
+            Port = uri.Port > 0 ? uri.Port : 5432,
+            Username = userInfo[0],
+            Password = userInfo.Length > 1 ? userInfo[1] : string.Empty,
+            Database = uri.AbsolutePath.TrimStart('/'),
+            SslMode = uri.Host.Contains("render.com") ? SslMode.Require : SslMode.Prefer,
+            TrustServerCertificate = true
+        };
+        connectionString = npgsqlBuilder.ConnectionString;
     }
     else
     {
-        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"));
+        connectionString = rawConn ?? string.Empty;
     }
+
+    options.UseNpgsql(connectionString, npgsqlOptions =>
+    {
+        npgsqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorCodesToAdd: null);
+    });
 });
 
 // 2. CORS Yapılandırması
@@ -56,72 +58,73 @@ builder.Services.AddCors(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// 3. Event-Driven Dekont Kuyruğu (Asenkron Background Worker)
+// 3. Event-Driven Dekont Kuyruğu
 builder.Services.AddSingleton(Channel.CreateUnbounded<ReceiptEvent>());
 builder.Services.AddHostedService<ReceiptWorkerService>();
 
 var app = builder.Build();
 
-// Swagger'ı Production dahil her ortamda aç
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "FinancialWallet API v1");
-    c.RoutePrefix = string.Empty; // Sitenin ana adresine girince (/) doğrudan Swagger açılsın
+    c.RoutePrefix = string.Empty;
 });
 
 app.UseCors("AllowAll");
 
-// 4. Tablo ve Demo Veri Oluşturma (Korumalı Blok)
-try
+// 4. Tablo ve Demo Veri Oluşturma (Otomatik Kontrollü)
+using (var scope = app.Services.CreateScope())
 {
-    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    db.Database.EnsureCreated();
-
-    if (!db.Users.Any())
+    try
     {
-        var user1 = new User { Id = Guid.NewGuid(), FullName = "Gökçe Soylu", Email = "gokce@apexwallet.com" };
-        var user2 = new User { Id = Guid.NewGuid(), FullName = "Ahmet Yılmaz", Email = "ahmet@apexwallet.com" };
+        db.Database.EnsureCreated();
 
-        var w1 = new Wallet { Id = Guid.NewGuid(), UserId = user1.Id, Currency = "TRY", Balance = 25000.00m, Version = Guid.NewGuid() };
-        var w2 = new Wallet { Id = Guid.NewGuid(), UserId = user1.Id, Currency = "USD", Balance = 1500.00m, Version = Guid.NewGuid() };
-        var w3 = new Wallet { Id = Guid.NewGuid(), UserId = user2.Id, Currency = "TRY", Balance = 3500.00m, Version = Guid.NewGuid() };
-
-        db.Users.AddRange(user1, user2);
-        db.Wallets.AddRange(w1, w2, w3);
-
-        db.Transactions.Add(new Transaction
+        if (!db.Users.Any())
         {
-            Id = Guid.NewGuid(),
-            SourceWalletId = w1.Id,
-            Amount = 25000.00m,
-            Type = TransactionType.Deposit,
-            Description = "İlk Bakiye Yüklemesi",
-            CreatedAt = DateTime.UtcNow
-        });
+            var user1 = new User { Id = Guid.NewGuid(), FullName = "Gökçe Soylu", Email = "gokce@apexwallet.com" };
+            var user2 = new User { Id = Guid.NewGuid(), FullName = "Ahmet Yılmaz", Email = "ahmet@apexwallet.com" };
 
-        db.SaveChanges();
+            var w1 = new Wallet { Id = Guid.NewGuid(), UserId = user1.Id, Currency = "TRY", Balance = 25000.00m, Version = Guid.NewGuid() };
+            var w2 = new Wallet { Id = Guid.NewGuid(), UserId = user1.Id, Currency = "USD", Balance = 1500.00m, Version = Guid.NewGuid() };
+            var w3 = new Wallet { Id = Guid.NewGuid(), UserId = user2.Id, Currency = "TRY", Balance = 3500.00m, Version = Guid.NewGuid() };
+
+            db.Users.AddRange(user1, user2);
+            db.Wallets.AddRange(w1, w2, w3);
+
+            db.Transactions.Add(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                SourceWalletId = w1.Id,
+                Amount = 25000.00m,
+                Type = TransactionType.Deposit,
+                Description = "İlk Bakiye Yüklemesi",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            db.SaveChanges();
+        }
     }
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[UYARI] Veritabanı başlatma hatası: {ex.Message}");
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[DB INIT ERROR] {ex.Message}");
+    }
 }
 
 // 5. Endpoint'ler
 
-// Health Check
 app.MapGet("/api/health/db", async (AppDbContext db) =>
 {
     var canConnect = await db.Database.CanConnectAsync();
     return canConnect ? Results.Ok(new { Status = "Healthy" }) : Results.Problem("DB Bağlantı Hatası");
 });
 
-// Cüzdanları ve Hareketleri Listeleme
 app.MapGet("/api/wallets", async (AppDbContext db) =>
 {
+    // Tablolar henüz oluşmadıysa endpoint içinde de garantiye al
+    await db.Database.EnsureCreatedAsync();
+
     var wallets = await db.Wallets
         .Include(w => w.Transactions.OrderByDescending(t => t.CreatedAt).Take(20))
         .Select(w => new
@@ -146,7 +149,6 @@ app.MapGet("/api/wallets", async (AppDbContext db) =>
     return Results.Ok(wallets);
 });
 
-// Para Yatırma / Çekme
 app.MapPost("/api/transactions/deposit-withdraw", async (AppDbContext db, DepositWithdrawDto dto) =>
 {
     if (dto.Amount <= 0) return Results.BadRequest("Tutar sıfırdan büyük olmalıdır.");
@@ -193,7 +195,6 @@ app.MapPost("/api/transactions/deposit-withdraw", async (AppDbContext db, Deposi
     }
 });
 
-// Hesaplar Arası Para Transferi
 app.MapPost("/api/transactions/transfer", async (AppDbContext db, Channel<ReceiptEvent> queue, TransferDto dto) =>
 {
     if (dto.Amount <= 0) return Results.BadRequest("Transfer tutarı sıfırdan büyük olmalıdır.");
@@ -264,7 +265,6 @@ app.MapPost("/api/transactions/transfer", async (AppDbContext db, Channel<Receip
 
 app.Run();
 
-// DTO Modelleri ve Worker Sınıfı
 public record DepositWithdrawDto(Guid WalletId, decimal Amount, TransactionType Type, string? Description);
 public record TransferDto(Guid SourceWalletId, Guid TargetWalletId, decimal Amount, string? Description);
 public record ReceiptEvent(Guid TransactionId, Guid FromWallet, Guid ToWallet, decimal Amount, string Currency, DateTime Date);
