@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # 1. Veritabanı Servisi
+  wallet-postgres:
+    image: postgres:16-alpine
+    container_name: wallet-postgres-db
+    restart: always
+    environment:
+      POSTGRES_DB: FinancialWalletDb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: wallet_strong_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - wallet_pgdata:/var/lib/postgresql/data
+    networks:
+      - wallet-network
+
+  # 2. .NET Web API Backend Servisi
+  wallet-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wallet-backend-api
+    restart: always
+    depends_on:
+      - wallet-postgres
+    environment:
+      # appsettings.json'daki connection string'i override eder:
+      ConnectionStrings__DefaultConnection: "Host=wallet-postgres;Port=5432;Database=FinancialWalletDb;Username=postgres;Password=wallet_strong_password"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    ports:
+      - "5000:5000"
+    networks:
+      - wallet-network
+
+  # 3. React Frontend Servisi
+  wallet-ui:
+    build:
+      context: ./financial-wallet-ui
+      dockerfile: Dockerfile
+    container_name: wallet-frontend-ui
+    restart: always
+    depends_on:
+      - wallet-api
+    ports:
+      - "5173:80"
+    networks:
+      - wallet-network
+
+volumes:
+  wallet_pgdata:
+
+networks:
+  wallet-network:
+    driver: bridge
